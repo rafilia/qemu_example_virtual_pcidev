@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-#define DEVFILE "/dev/hello"
+#define DEVFILE "/dev/hello0"
 
 int open_device()
 {

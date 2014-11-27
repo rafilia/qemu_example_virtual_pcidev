@@ -9,6 +9,7 @@
 #include <linux/cdev.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/device.h>
 #include <asm/current.h>
 #include <asm/uaccess.h>
 
@@ -17,6 +18,8 @@ MODULE_AUTHOR("tm");
 MODULE_DESCRIPTION("test hello device driver");
 
 #define DRIVER_NAME "hello"
+#define CLASS_NAME "hello"
+#define DEVICE_NAME "hello%d"
 
 // max device count
 static int hello_devs_max = 2;
@@ -26,12 +29,17 @@ static unsigned int hello_major;
 // get parameter from console if needed for hello_major
 module_param(hello_major, uint, 0);
 
-static struct cdev hello_cdev;
+static unsigned int hello_minor = 0; // static allocation
 
+static struct class *hello_class = NULL;
+static dev_t hello_dev;
+
+static struct cdev hello_cdev;
 struct hello_data {
 	unsigned char val;
 	rwlock_t lock;
 };
+
 
 ssize_t hello_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_ops)
 {
@@ -141,7 +149,9 @@ static int hello_init(void)
 	int alloc_ret = 0;
 	int major;
 	int cdev_err = 0;
+	struct device *class_dev = NULL;
 
+	// allocate major number
 	alloc_ret = alloc_chrdev_region(&dev, 0, hello_devs_max, DRIVER_NAME);
 	if(alloc_ret) goto error;
 
@@ -152,6 +162,14 @@ static int hello_init(void)
 
 	cdev_err = cdev_add(&hello_cdev, MKDEV(hello_major, 0), hello_devs_max);
 	if(cdev_err) goto error;
+
+	// register class
+	hello_class = class_create(THIS_MODULE, "CLASS_NAME");
+	if(IS_ERR(hello_class)) goto error;
+	
+	hello_dev = MKDEV(hello_major, hello_minor);
+	class_dev = device_create(hello_class, NULL, hello_dev, NULL, 
+																	DEVICE_NAME, hello_minor);
 
 	printk(KERN_ALERT "%s driver(major %d) installed.\n", DRIVER_NAME, major);
 
@@ -168,6 +186,10 @@ error:
 static void hello_exit(void)
 {
 	dev_t dev = MKDEV(hello_major, 0);
+
+	// unregister class
+	device_destroy(hello_class, hello_dev);
+	class_destroy(hello_class);
 
 	cdev_del(&hello_cdev);
 	unregister_chrdev_region(dev, hello_devs_max);

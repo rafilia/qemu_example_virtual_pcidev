@@ -22,12 +22,6 @@ MODULE_DESCRIPTION("test hello pci device driver");
 #define DRIVER_HELLO_NAME "hello_pci"
 #define DEVICE_HELLO_NAME "hello_pci_dev"
 
-#define PCI_VENDOR_ID_HELLO 0x7000
-#define PCI_DEVICE_ID_HELLO 0x0001
-
-// pci bar(base address register) number
-#define BAR_MMIO 0
-#define BAR_PIO  1
 
 // max device count (minor number)
 static int hello_pci_devs_max = 2;
@@ -113,32 +107,47 @@ ssize_t hello_pci_read(struct file *filp, char __user *buf, size_t count, loff_t
 	return read_num;
 }
 
-typedef struct hello_ioctl_data{
-	int val;
-	int buf;
-} hello_ioctl_data;
-
 long hello_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	unsigned long pio_base;
+	unsigned long pio_base, mmio_base;
+	char *mmio_addr;
 	struct pci_dev *pdev = (struct pci_dev *)filp->private_data;
 
-	long val = 0;
+	int val = 0;
+	int data[DATANUM];
+
 	hello_ioctl_data *d = arg;
 
 	pio_base = pci_resource_start(pdev, BAR_PIO);
+	mmio_base = pci_resource_start(pdev, BAR_MMIO);
+	mmio_addr = ioremap(mmio_base, HELLO_PCI_MEMSIZE);
 
 	printk("_cmd:%d\n", cmd);
 	switch (cmd) {
 		case HELLO_CMD_READ :
-			val = inl(pio_base + HELLO_OFFSET);
-			put_user(val, &(d->buf));
+			val = inl(pio_base + HELLO_PIOOFFSET);
+			put_user(val, &(d->buf[0]));
 			break;
 		case HELLO_CMD_WRITE :
 			get_user(val, &(d->val));
 			printk("_val:%x\n", val);
-			outl(val, pio_base + HELLO_OFFSET);
+			outl(val, pio_base + HELLO_PIOOFFSET);
 			break;
+
+		case HELLO_CMD_MEMREAD :
+			/* val = ioread32(mmio_addr+HELLO_MEMOFFSET); */
+			/* put_user(val, &(d->buf[0])); */
+
+			// ioread32_rep(mmio_addr+HELLO_MEMOFFSET, data, DATANUM);
+			memcpy_fromio(data, mmio_addr+HELLO_MEMOFFSET, DATANUM*sizeof(int));
+			copy_to_user(d->buf, data, DATANUM*sizeof(int));
+			break;
+		case HELLO_CMD_MEMWRITE :
+			get_user(val, &(d->val));
+			printk("_val:%x\n", val);
+			iowrite32(val, mmio_addr+HELLO_MEMOFFSET);
+			break;
+
 		default:
 			return -EINVAL; // invalid argument(cmd)
 	}
@@ -206,6 +215,8 @@ static int hello_pci_probe (struct pci_dev *pdev,
 	int alloc_ret = 0;
 	int cdev_err = 0;
 
+	short vendor_id, device_id;
+
 	//-----------------------------------------------------------------
 	// enable pci device
 	err = pci_enable_device(pdev);
@@ -222,6 +233,7 @@ static int hello_pci_probe (struct pci_dev *pdev,
 	/* 	return err;  */
 	/* } */
 
+	// get irq
 	irq = pdev->irq;
 	printk(KERN_ALERT "device irq: %d\n", irq);
 
@@ -249,6 +261,13 @@ static int hello_pci_probe (struct pci_dev *pdev,
 	}
 
 	printk(KERN_ALERT "pio_base: %lx, pio_length: %lx, pio_flags: %lx\n", pio_base, pio_length, pio_flags);
+
+	// PCI configuration space
+	// define at include/uapi/linux/pci_regs.h
+	pci_read_config_word(pdev, PCI_VENDOR_ID, &vendor_id);
+	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
+
+	printk(KERN_ALERT "PCI Vendor ID:%x, Device ID:%x\n", vendor_id, device_id);
 
 	printk(KERN_ALERT "sucess allocate i/o region\n");
 
@@ -293,6 +312,8 @@ static void hello_pci_remove(struct pci_dev *pdev)
 	cdev_del(hello_pci_cdev);
 	unregister_chrdev_region(hello_pci_devt, hello_pci_devs_max);
 
+	pci_release_region(pdev, BAR_MMIO);
+	pci_release_region(pdev, BAR_PIO);
 	pci_disable_device(pdev);
 
 	printk("%s driver (major %d) unloaded\n", DRIVER_HELLO_NAME, hello_pci_major);

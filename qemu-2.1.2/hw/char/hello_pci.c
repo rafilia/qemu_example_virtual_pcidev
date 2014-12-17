@@ -19,19 +19,15 @@
 #include "qemu/event_notifier.h"
 #include "qemu/osdep.h"
 
-#define HELLO_PCI_IOSIZE 128
-#define HELLO_PCI_MEMSIZE 2048
-
-#define PCI_VENDOR_ID_HELLO 0x7000
-#define PCI_DEVICE_ID_HELLO 0x0001
-
-#define BAR_MMIO 0
-#define BAR_PIO  1
-
-static const char *iotest_type[] = {
-    "mmio",
-    "portio"
-};
+#include "../../../custom_device/hello_pci/hello_pci_device.h"
+/* #define HELLO_PCI_IOSIZE 128 */
+/* #define HELLO_PCI_MEMSIZE 2048 */
+/*  */
+/* #define PCI_VENDOR_ID_HELLO 0x7000 */
+/* #define PCI_DEVICE_ID_HELLO 0x0001 */
+/*  */
+/* #define BAR_MMIO 0 */
+/* #define BAR_PIO  1 */
 
 typedef struct HelloPCIState {
     PCIDevice parent_obj;
@@ -46,55 +42,67 @@ typedef struct HelloPCIState {
 #define HELLO_PCI(obj) \
     OBJECT_CHECK(HelloPCIState, (obj), TYPE_HELLO_PCI)
 
-#define PIO_HELLO_OFFSET 40
 
 static uint64_t
 hello_pci_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     HelloPCIState *d = opaque;
-		printf("%s : addr %lld, size %d\n", __func__,   addr, size);
+		printf("%s : addr %ld, size %d\n", __func__,   addr, size);
 
-    return 0x12345678;
+		if(addr >= HELLO_MEMOFFSET && addr < HELLO_MEMOFFSET + DATANUM*sizeof(int)){
+			return d->data + addr-HELLO_MEMOFFSET;
+		}
+
+    return 0xaabbccdd;
 }
 
 static uint64_t
 hello_pci_pio_read(void *opaque, hwaddr addr, unsigned size)
 {
     HelloPCIState *d = opaque;
-		printf("%s : addr %lld, size %d\n", __func__ , addr, size);
+		printf("%s : addr %ld, size %d\n", __func__ , addr, size);
 
-		if(addr == PIO_HELLO_OFFSET){
+		if(addr == HELLO_PIOOFFSET){
 			return d->data;
 		}
 
     return 0x12345678;
 }
 
-static void
-hello_pci_write(void *opaque, hwaddr addr, uint64_t val,
-                  unsigned size, int type)
-{
-    HelloPCIState *d = opaque;
-
-		printf("%s : addr %lld, size %d, type:%d\n", __func__ , addr, size, type);
-		if(addr = PIO_HELLO_OFFSET){
-			d->data = val;
-		}
-}
+/* static void */
+/* hello_pci_write(void *opaque, hwaddr addr, uint64_t val, */
+/*                   unsigned size, int type) */
+/* { */
+/*     HelloPCIState *d = opaque; */
+/*  */
+/* 		printf("%s : addr %lld, size %d, type:%d\n", __func__ , addr, size, type); */
+/* 		if(addr = HELLO_PIOOFFSET){ */
+/* 			d->data = val; */
+/* 		} */
+/* } */
 
 static void
 hello_pci_mmio_write(void *opaque, hwaddr addr, uint64_t val,
                        unsigned size)
 {
-    hello_pci_write(opaque, addr, val, size, 0);
+    HelloPCIState *d = opaque;
+
+		printf("%s : addr %ld, size %d\n", __func__ , addr, size);
+		if(addr == HELLO_MEMOFFSET){
+			d->data = val;
+		}
 }
 
 static void
 hello_pci_pio_write(void *opaque, hwaddr addr, uint64_t val,
                        unsigned size)
 {
-		printf("%s\n", __func__ );
-    hello_pci_write(opaque, addr, val, size, 1);
+    HelloPCIState *d = opaque;
+
+		printf("%s : addr %ld, size %d\n", __func__ , addr, size);
+		if(addr == HELLO_PIOOFFSET){
+			d->data = val;
+		}
 }
 
 static const MemoryRegionOps hello_pci_mmio_ops = {
@@ -102,8 +110,8 @@ static const MemoryRegionOps hello_pci_mmio_ops = {
     .write = hello_pci_mmio_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
-        .min_access_size = 1,
-        .max_access_size = 1,
+        .min_access_size = 4,
+        .max_access_size = 4,
     },
 };
 
@@ -123,7 +131,7 @@ static int hello_pci_init(PCIDevice *pci_dev)
     uint8_t *pci_conf;
   
     pci_conf = pci_dev->config;
-    pci_conf[PCI_INTERRUPT_PIN] = 0; /* no interrupt pin */
+    pci_conf[PCI_INTERRUPT_PIN] = 1; /* if 0 no interrupt pin */
 
 		// register io map/port
     memory_region_init_io(&d->mmio, OBJECT(d), &hello_pci_mmio_ops,  d,
@@ -145,6 +153,11 @@ static int hello_pci_init(PCIDevice *pci_dev)
 static void
 hello_pci_uninit(PCIDevice *dev)
 {
+    HelloPCIState *d = HELLO_PCI(dev);
+
+		memory_region_destroy(&d->mmio);
+		memory_region_destroy(&d->portio);
+
     printf("hello_pci: unloaded\n");
 }
 

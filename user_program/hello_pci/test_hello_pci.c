@@ -61,20 +61,11 @@ void write_device(int fd, unsigned char val)
 	}
 }
 
-typedef struct hello_ioctl_data {
-	int val;
-	int buf;
-} hello_ioctl_data;
-
-void ioctl_device(int fd, int cmd, int val)
+void ioctl_device(int fd, int cmd, hello_ioctl_data *d) 
 {
-	int ret;
-	hello_ioctl_data *d;
+	int ret, i;
 
-	d = malloc(sizeof(hello_ioctl_data));
-	if(!d) exit(1);
 
-	d->val = val;
 	ret = ioctl(fd, cmd, d);
 
 	if(ret < 0) {
@@ -82,13 +73,25 @@ void ioctl_device(int fd, int cmd, int val)
 	}
 
 	if(cmd == HELLO_CMD_READ){
-		printf("%x\n", d->buf);
+		printf("%x\n", d->buf[0]);
+	}
+
+	if(cmd == HELLO_CMD_MEMREAD){
+		for(i = 0; i < DATANUM; i++) {
+			printf("%x\n", d->buf[i]);
+		}
 	}
 }
 
 int main(int argc, char const* argv[])
 {
 	int fd, i;
+	hello_ioctl_data *d;
+
+	d = malloc(sizeof(hello_ioctl_data));
+	if(!d) exit(1);
+	d->val = 0;
+
 	fd = open_device();
 	printf("success: open device hello \n");
 
@@ -96,10 +99,20 @@ int main(int argc, char const* argv[])
 
 	write_device(fd, 0);
 
-	printf("\n ioctl check \n");
-	ioctl_device(fd, HELLO_CMD_READ, 0);
-	ioctl_device(fd, HELLO_CMD_WRITE, 0x34567812);
-	ioctl_device(fd, HELLO_CMD_READ, 0);
+	printf("\nioctl check \n");
+	printf("port io check \n");
+	ioctl_device(fd, HELLO_CMD_READ, d);
+	d->val = 0x34567812;
+	ioctl_device(fd, HELLO_CMD_WRITE, d);
+	d->val = 0;
+	ioctl_device(fd, HELLO_CMD_READ, d);
+
+	printf("\nmmio check \n");
+	ioctl_device(fd, HELLO_CMD_MEMREAD, d);
+	d->val = 0x33333333;
+	ioctl_device(fd, HELLO_CMD_MEMWRITE, d);
+	d->val = 0;
+	ioctl_device(fd, HELLO_CMD_MEMREAD, d);
 
 	ioctl_device(fd, 999, 0);
 

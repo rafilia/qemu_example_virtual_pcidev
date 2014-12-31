@@ -16,9 +16,6 @@
 #define TEST_CMD_SDMA_START _IOW(TEST_PCI_MAGIC, 6, int)
 #define TEST_CMD_GET_SDMA_DATA _IOR(TEST_PCI_MAGIC, 7, int)
 
-// get interrupt info
-#define TEST_CMD_GET_INTMASK _IOR(TEST_PCI_MAGIC, 8, int)
-
 /* address offset */
 #define TEST_PIO 0
 #define TEST_MEM 0

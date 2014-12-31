@@ -50,6 +50,7 @@ struct test_device_data {
 	// for PCI pio/mmio
 	unsigned long pio_base, pio_flags, pio_length;
 	unsigned long mmio_base, mmio_flags, mmio_length;
+	char *mmio_addr;
 
 	unsigned int pio_memsize;
 
@@ -57,8 +58,11 @@ struct test_device_data {
 	dma_addr_t cdma_addr, sdma_addr;
 	int cdma_len, sdma_len;
 	void *cdma_buffer, *sdma_buffer;
+
+	wait_queue_head_t sdma_q;
 };
 
+static int sdma_done = 0;
 static struct test_device_data *dev_data;
 
 //-----------------------------------------------------------------
@@ -83,7 +87,6 @@ ssize_t test_pci_write(struct file *filp, const char __user *buf, size_t count, 
 		(*f_ops)++;
 	}
 
-/* out: */
 	return write_num;
 }
 
@@ -108,7 +111,6 @@ ssize_t test_pci_read(struct file *filp, char __user *buf, size_t count, loff_t 
 		(*f_ops)++;
 	}
 
-/* out: */
 	return read_num;
 }
 
@@ -142,12 +144,9 @@ loff_t test_pci_llseek(struct file *filp, loff_t off, int whence)
 
 long test_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	char *mmio_addr;
 	int data[TEST_MMIO_DATANUM];
 	test_ioctl_data *d = arg;
 	int n;
-
-	mmio_addr = ioremap(dev_data->mmio_base, TEST_PCI_MEMSIZE);
 
 	tprintk("_cmd:%d\n", cmd);
 	switch (cmd) {
@@ -155,19 +154,18 @@ long test_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			/* val = ioread32(mmio_addr); */
 			// ioread32_rep(mmio_addr, data, TEST_MMIO_DATANUM);
 			
-			memcpy_fromio(data, mmio_addr, TEST_MMIO_DATASIZE);
+			memcpy_fromio(data, dev_data->mmio_addr, TEST_MMIO_DATASIZE);
 			copy_to_user(d->mmiodata, data, TEST_MMIO_DATASIZE);
 			break;
 		case TEST_CMD_MEMWRITE :
 			/* iowrite32(val, mmio_addr+TEST_MEM); */
 
 			copy_from_user(data, d->mmiodata, TEST_MMIO_DATASIZE);
-			memcpy_toio(mmio_addr, data, TEST_MMIO_DATASIZE);
+			memcpy_toio(dev_data->mmio_addr, data, TEST_MMIO_DATASIZE);
 			break;
 
 		case TEST_CMD_CDMA_START :
 			copy_from_user(dev_data->cdma_buffer, d->cdmabuf, TEST_CDMA_BUFFER_SIZE);
-			/* memcpy(dev_data->cdma_buffer, data, TEST_CDMA_BUFFER_SIZE); */
 			wmb();
 			outl(CDMA_START, dev_data->pio_base + TEST_CDMA_START);
 			break;
@@ -190,6 +188,12 @@ long test_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			outl(SDMA_START, dev_data->pio_base + TEST_SDMA_START);
 			break;
 		case TEST_CMD_GET_SDMA_DATA :
+			tprintk("sdma_done %d\n", sdma_done);
+			if(wait_event_interruptible(dev_data->sdma_q, (sdma_done == 1))) {
+					return -ERESTARTSYS;
+			}
+			sdma_done = 0;
+
 			pci_unmap_single(dev_data->pdev, dev_data->sdma_addr,
 		  			TEST_SDMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
 			n = copy_to_user(d->sdmabuf, dev_data->sdma_buffer, TEST_SDMA_BUFFER_SIZE);
@@ -202,15 +206,9 @@ long test_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			outl(0, dev_data->pio_base + TEST_DO);
 			break;
 
-		/* case TEST_CMD_GET_INTMASK : */
-		/* 	val = inb(dev_data->pio_base + TEST_INTMASK); */
-		/* 	break; */
 		default:
-			iounmap(mmio_addr);
 			return -EINVAL; // invalid argument(cmd)
 	}
-
-	iounmap(mmio_addr);
 
 	return 0;
 }
@@ -223,7 +221,6 @@ static int test_pci_open(struct inode *inode, struct file *file)
 	return 0; // success
 }
 
-// todo check free region
 static int test_pci_close(struct inode *inode, struct file *file)
 {
 
@@ -234,7 +231,6 @@ static int test_pci_close(struct inode *inode, struct file *file)
 
 	return 0; // success
 }
-
 
 struct file_operations test_pci_fops = 
 {
@@ -278,10 +274,11 @@ irqreturn_t test_pci_handler(int irq, void *dev_id)
 		tasklet_schedule(&test_tasklet);
 	}
 	if(intmask & INT_CDMA) {
-		tasklet_schedule(&test_tasklet);
+		// tasklet_schedule(&test_tasklet);
 	}
 	if(intmask & INT_SDMA) {
-		tasklet_schedule(&test_tasklet);
+		// tasklet_schedule(&test_tasklet);
+		sdma_done = 1;
 	}
 
 	outb(0, dev_data->pio_base + TEST_SET_INTMASK);
@@ -324,6 +321,8 @@ static int test_pci_probe (struct pci_dev *pdev,
 	dev_data->mmio_flags = pci_resource_flags(pdev, BAR_MMIO);
 	tprintk( "mmio_base: %lx, mmio_length: %lx, mmio_flags: %lx\n",
 			dev_data->mmio_base, dev_data->mmio_length, dev_data->mmio_flags);
+
+	dev_data->mmio_addr = ioremap(dev_data->mmio_base, TEST_PCI_MEMSIZE);
 
 	if(!(dev_data->mmio_flags & IORESOURCE_MEM)){
 		printk(KERN_ERR "BAR%d is not for mmio\n", BAR_MMIO);
@@ -428,6 +427,7 @@ static int test_pci_probe (struct pci_dev *pdev,
 		printk(KERN_ERR "Cannot allocate streaming DMA buffer\n");
 		goto error;
 	}
+	init_waitqueue_head(&(dev_data->sdma_q));
 
 	return 0;
 
@@ -442,16 +442,21 @@ error:
 
 static void test_pci_remove(struct pci_dev *pdev)
 {
+
+	pci_free_consistent(dev_data->pdev, TEST_CDMA_BUFFER_SIZE,
+			dev_data->cdma_buffer, dev_data->cdma_addr);
+
 	cdev_del(dev_data->cdev);
 	unregister_chrdev_region(test_pci_devt, test_pci_devs_max);
 
-	pci_release_region(pdev, BAR_MMIO);
-	pci_release_region(pdev, BAR_PIO);
-	pci_disable_device(pdev);
+	iounmap(dev_data->mmio_addr);
+
+	pci_release_region(dev_data->pdev, BAR_MMIO);
+	pci_release_region(dev_data->pdev, BAR_PIO);
+	pci_disable_device(dev_data->pdev);
 
 	tprintk("%s driver (major %d) unloaded\n", DRIVER_TEST_NAME, test_pci_major);
 }
-
 
 static struct pci_driver test_pci_driver =
 {
@@ -460,7 +465,6 @@ static struct pci_driver test_pci_driver =
 	.probe = test_pci_probe,
 	.remove = test_pci_remove,
 };
-
 
 //-----------------------------------------------------------------
 // module init/exit
@@ -477,6 +481,7 @@ static int __init test_pci_init(void)
 
 static void __exit test_pci_exit(void)
 {
+	kfree(dev_data);
 	pci_unregister_driver(&test_pci_driver);
 }
 

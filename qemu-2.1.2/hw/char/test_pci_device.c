@@ -3,6 +3,7 @@
 #include "hw/hw.h"
 #include "hw/pci/pci.h"
 
+#include <stdlib.h>
 #include "../../../custom_device/test_pci/test_pci.h"
 
 #define TEST_PCI_DEVICE_DEBUG
@@ -65,6 +66,12 @@ void test_show_cdmabuf(TestPCIState *s)
 	pci_irq_assert(pci_dev);
 }
 
+int comp_int(const void* a, const void*b);
+int comp_int(const void* a, const void*b)
+{
+	return *((int *)a) - *((int *)b);
+}
+
 void test_show_sdmabuf(TestPCIState *s);
 void test_show_sdmabuf(TestPCIState *s) 
 {
@@ -72,10 +79,10 @@ void test_show_sdmabuf(TestPCIState *s)
 	int i;
 	
 	for (i = 0; i < TEST_SDMA_BUFFER_NUM; i++) {
-		printf("%3d ", s->sdma_buf[i]++);
+		printf("%3d ", s->sdma_buf[i]);
 	}
 	printf("\n");
-
+	qsort(s->sdma_buf, TEST_SDMA_BUFFER_NUM, sizeof(int), comp_int);
 	pci_dma_write(pci_dev,  s->sdma_addr, s->sdma_buf, s->sdma_len);
 
 	s->intmask |= INT_SDMA;

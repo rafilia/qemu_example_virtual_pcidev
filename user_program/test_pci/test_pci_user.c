@@ -87,7 +87,7 @@ void portio_test(int fd)
 
 void mmio_test(int fd)
 {
-	int i, retval;
+	int i;
 
 	test_ioctl_data *d;
 	d = malloc(sizeof(test_ioctl_data));
@@ -95,19 +95,19 @@ void mmio_test(int fd)
 
 	printf("\n---- start mmio test ----\n");
 
-	retval = ioctl(fd, TEST_CMD_MEMREAD, d);
+	ioctl(fd, TEST_CMD_MEMREAD, d);
 	for(i = 0; i < TEST_MMIO_DATANUM; i++) {
 		printf("%2d ", d->mmiodata[i]);
 		d->mmiodata[i] += 10;
 	}
 	printf("\n");
 
-	retval = ioctl(fd, TEST_CMD_MEMWRITE, d);
+	ioctl(fd, TEST_CMD_MEMWRITE, d);
 	for(i = 0; i < TEST_MMIO_DATANUM; i++) {
 		d->mmiodata[i] = 0;
 	}
 
-	retval = ioctl(fd, TEST_CMD_MEMREAD, d);
+	ioctl(fd, TEST_CMD_MEMREAD, d);
 	for(i = 0; i < TEST_MMIO_DATANUM; i++) {
 		printf("%2d ", d->mmiodata[i]);
 	}
@@ -119,8 +119,6 @@ void mmio_test(int fd)
 
 void interrupt_test(int fd)
 {
-	int i, retval;
-
 	test_ioctl_data *d;
 	d = malloc(sizeof(test_ioctl_data));
 
@@ -133,15 +131,14 @@ void interrupt_test(int fd)
 
 	free(d);
 }
-void dma_test(int fd)
+void cdma_test(int fd)
 {
-	int i, retval;
+	int i;
 
 	test_ioctl_data *d;
 	d = malloc(sizeof(test_ioctl_data));
 
 	if(!d) exit(1);
-	printf("\n---- start dma test ----\n");
 	printf("\n---- start consistent dma test ----\n");
 
 	for(i = 0; i < TEST_CDMA_BUFFER_NUM; i++){
@@ -158,11 +155,23 @@ void dma_test(int fd)
 
 	printf("\n---- end consistent dma test ----\n");
 
-	sleep(1);
+	free(d);
+}
+
+void sdma_test(int fd)
+{
+	int i;
+
+	test_ioctl_data *d;
+	d = malloc(sizeof(test_ioctl_data));
+
+	if(!d) exit(1);
+
+	srand(123);
 	printf("\n---- start streaming dma test ----\n");
 
 	for(i = 0; i < TEST_SDMA_BUFFER_NUM; i++){
-		d->sdmabuf[i] = i;
+		d->sdmabuf[i] = rand()%1000;
 	}
 	ioctl(fd, TEST_CMD_SDMA_START, d);
 
@@ -174,21 +183,20 @@ void dma_test(int fd)
 
 	printf("\n---- end streaming dma test ----\n");
 
-	printf("\n---- end dma test ----\n");
-
 	free(d);
 }
 
 int main(int argc, char const* argv[])
 {
-	int fd, i;
+	int fd;
 
 	fd = open_device(DEVFILE);
 
 	portio_test(fd);
 	mmio_test(fd);
 	interrupt_test(fd);
-	dma_test(fd);
+	cdma_test(fd);
+	sdma_test(fd);
 
 	close_device(fd);
 	return 0;

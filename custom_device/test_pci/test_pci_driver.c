@@ -442,12 +442,13 @@ error:
 
 static void test_pci_remove(struct pci_dev *pdev)
 {
-
 	pci_free_consistent(dev_data->pdev, TEST_CDMA_BUFFER_SIZE,
 			dev_data->cdma_buffer, dev_data->cdma_addr);
 
 	cdev_del(dev_data->cdev);
 	unregister_chrdev_region(test_pci_devt, test_pci_devs_max);
+
+	free_irq(dev_data->pdev->irq, dev_data->pdev);
 
 	iounmap(dev_data->mmio_addr);
 
@@ -481,8 +482,8 @@ static int __init test_pci_init(void)
 
 static void __exit test_pci_exit(void)
 {
-	kfree(dev_data);
 	pci_unregister_driver(&test_pci_driver);
+	kfree(dev_data);
 }
 
 module_init(test_pci_init);

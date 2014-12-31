@@ -95,26 +95,40 @@ int main(int argc, char const* argv[])
 	fd = open_device();
 	printf("success: open device hello \n");
 
-	read_device(fd);
+	// read_device(fd);
+	// write_device(fd, 0);
 
-	write_device(fd, 0);
+	// printf("\nioctl check \n");
+	// printf("port io check \n");
+	// ioctl_device(fd, HELLO_CMD_READ, d);
+	// d->val = 0x34567812;
+	// ioctl_device(fd, HELLO_CMD_WRITE, d);
+	// d->val = 0;
+	// ioctl_device(fd, HELLO_CMD_READ, d);
 
-	printf("\nioctl check \n");
-	printf("port io check \n");
-	ioctl_device(fd, HELLO_CMD_READ, d);
-	d->val = 0x34567812;
-	ioctl_device(fd, HELLO_CMD_WRITE, d);
-	d->val = 0;
-	ioctl_device(fd, HELLO_CMD_READ, d);
+	// printf("\nmmio check \n");
+	// ioctl_device(fd, HELLO_CMD_MEMREAD, d);
+	// d->val = 0x33333333;
+	// ioctl_device(fd, HELLO_CMD_MEMWRITE, d);
+	// d->val = 0;
+	// ioctl_device(fd, HELLO_CMD_MEMREAD, d);
 
-	printf("\nmmio check \n");
-	ioctl_device(fd, HELLO_CMD_MEMREAD, d);
-	d->val = 0x33333333;
-	ioctl_device(fd, HELLO_CMD_MEMWRITE, d);
-	d->val = 0;
-	ioctl_device(fd, HELLO_CMD_MEMREAD, d);
+	// ioctl_device(fd, 999, 0);
 
-	ioctl_device(fd, 999, 0);
+	// ioctl_device(fd, HELLO_CMD_DOSOMETHING, d);
+
+	for(i = 0; i < HELLO_DMA_BUFFER_SIZE/sizeof(int); i++){
+		d->buf[i] = i;
+	}
+
+	/* ioctl_device(fd, HELLO_CMD_DMA_START, d); */
+	/* ioctl_device(fd, HELLO_CMD_GET_DMA_DATA, d); */
+	ioctl_device(fd, HELLO_CMD_SDMA_START, d);
+	ioctl_device(fd, HELLO_CMD_GET_SDMA_DATA, d);
+	for(i = 0; i < HELLO_DMA_BUFFER_SIZE/sizeof(int); i++){
+		printf("%d ", d->buf[i]);
+	}
+	printf("\n");
 
 	close_device(fd);
 	printf("success: close device hello \n");

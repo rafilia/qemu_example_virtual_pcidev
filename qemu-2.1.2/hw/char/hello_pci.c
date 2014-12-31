@@ -20,21 +20,19 @@
 #include "qemu/osdep.h"
 
 #include "../../../custom_device/hello_pci/hello_pci_device.h"
-/* #define HELLO_PCI_IOSIZE 128 */
-/* #define HELLO_PCI_MEMSIZE 2048 */
-/*  */
-/* #define PCI_VENDOR_ID_HELLO 0x7000 */
-/* #define PCI_DEVICE_ID_HELLO 0x0001 */
-/*  */
-/* #define BAR_MMIO 0 */
-/* #define BAR_PIO  1 */
 
 typedef struct HelloPCIState {
     PCIDevice parent_obj;
 
 		MemoryRegion mmio;
 		MemoryRegion portio;
+
 		int data;
+
+		// for DMA operation
+		dma_addr_t dma_addr, sdma_addr;
+		int dma_len, sdma_len;
+		int dma_buf[HELLO_DMA_BUFFER_SIZE/sizeof(int)];
 } HelloPCIState;
 
 #define TYPE_HELLO_PCI "hello_pci"
@@ -81,6 +79,57 @@ hello_pci_pio_read(void *opaque, hwaddr addr, unsigned size)
 /* 		} */
 /* } */
 
+// when processing complete, raise irq line
+void hello_do_something(HelloPCIState *d);
+void hello_do_something(HelloPCIState *d) 
+{
+	PCIDevice *pci_dev = PCI_DEVICE(d);
+	
+	// raise irq line
+	pci_irq_assert(pci_dev);
+}
+
+void hello_show_dmabuf(HelloPCIState *d);
+void hello_show_dmabuf(HelloPCIState *d) 
+{
+	PCIDevice *pci_dev = PCI_DEVICE(d);
+	int i;
+	
+	for (i = 0; i < HELLO_DMA_BUFFER_SIZE/sizeof(int); i++) {
+		printf("%4d ", d->dma_buf[i]++);
+	}
+	printf("\n");
+
+	pci_dma_write(pci_dev,  d->dma_addr, d->dma_buf, d->dma_len);
+
+	pci_irq_assert(pci_dev);
+}
+
+void hello_show_sdmabuf(HelloPCIState *d);
+void hello_show_sdmabuf(HelloPCIState *d) 
+{
+	PCIDevice *pci_dev = PCI_DEVICE(d);
+	int i;
+	
+	for (i = 0; i < HELLO_DMA_BUFFER_SIZE/sizeof(int); i++) {
+		printf("%4d ", d->dma_buf[i]++);
+	}
+	printf("\n");
+
+	pci_dma_write(pci_dev,  d->sdma_addr, d->dma_buf, d->sdma_len);
+
+	pci_irq_assert(pci_dev);
+}
+
+void hello_down_irq(HelloPCIState *d);
+void hello_down_irq(HelloPCIState *d) 
+{
+	PCIDevice *pci_dev = PCI_DEVICE(d);
+	
+	// down irq line
+	pci_irq_deassert(pci_dev);
+}
+
 static void
 hello_pci_mmio_write(void *opaque, hwaddr addr, uint64_t val,
                        unsigned size)
@@ -88,6 +137,7 @@ hello_pci_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     HelloPCIState *d = opaque;
 
 		printf("%s : addr %ld, size %d\n", __func__ , addr, size);
+		
 		if(addr == HELLO_MEMOFFSET){
 			d->data = val;
 		}
@@ -98,11 +148,51 @@ hello_pci_pio_write(void *opaque, hwaddr addr, uint64_t val,
                        unsigned size)
 {
     HelloPCIState *d = opaque;
+		PCIDevice *pdev = PCI_DEVICE(d);
 
 		printf("%s : addr %ld, size %d\n", __func__ , addr, size);
-		if(addr == HELLO_PIOOFFSET){
-			d->data = val;
+
+		switch (addr) {
+			case HELLO_PIOOFFSET :
+				d->data = val;
+				break;
+			case HELLO_DOOFFSET:
+				hello_do_something(d);
+				break;
+
+			case HELLO_DOWN_IRQ_OFFSET:
+				hello_down_irq(d);
+				break;
+
+			// coherent DMA
+			case HELLO_SET_DMA_ADDR:
+				d->dma_addr = val;
+				break;
+			case HELLO_SET_DMA_LEN:
+				d->dma_len = val;
+				break;
+			case HELLO_DMA_START:
+				pci_dma_read(pdev, d->dma_addr, d->dma_buf, d->dma_len);
+				hello_show_dmabuf(d);
+
+			// streaming DMA
+			case HELLO_SET_SDMA_ADDR:
+				d->sdma_addr = val;
+				break;
+			case HELLO_SET_SDMA_LEN:
+				d->sdma_len = val;
+				break;
+			case HELLO_SDMA_START:
+				pci_dma_read(pdev, d->sdma_addr, d->dma_buf, d->sdma_len);
+				hello_show_sdmabuf(d);
+
+			default:
+				;
 		}
+
+		/* if(addr == HELLO_PIOOFFSET){ */
+		/* 	d->data = val; */
+		/* } */
 }
 
 static const MemoryRegionOps hello_pci_mmio_ops = {

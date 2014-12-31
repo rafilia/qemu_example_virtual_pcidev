@@ -10,6 +10,8 @@
 #include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/pci.h>
+#include <linux/interrupt.h>
+#include <asm/dma.h>
 #include <asm/current.h>
 #include <asm/uaccess.h>
 
@@ -44,6 +46,11 @@ static struct cdev *hello_pci_cdev = NULL;
 struct pci_cdev {
 	struct pci_dev *pdev;
 	struct cdev *cdev;
+
+	// for coherent/streaming dma
+	dma_addr_t dma_addr, sdma_addr;
+	int dma_len, sdma_len;
+	void *dma_buffer, *sdma_buffer;
 };
 
 static struct pci_cdev *pci_cdev;
@@ -118,6 +125,8 @@ long hello_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	hello_ioctl_data *d = arg;
 
+	int n;
+
 	pio_base = pci_resource_start(pdev, BAR_PIO);
 	mmio_base = pci_resource_start(pdev, BAR_MMIO);
 	mmio_addr = ioremap(mmio_base, HELLO_PCI_MEMSIZE);
@@ -148,9 +157,48 @@ long hello_pci_uioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			iowrite32(val, mmio_addr+HELLO_MEMOFFSET);
 			break;
 
+		case HELLO_CMD_DMA_START :
+			copy_from_user(pci_cdev->sdma_buffer, d->buf, HELLO_DMA_BUFFER_SIZE);
+			/* memcpy(pci_cdev->dma_buffer, data, HELLO_DMA_BUFFER_SIZE); */
+			wmb();
+			outl(DMA_START, pio_base + HELLO_DMA_START);
+			break;
+		case HELLO_CMD_GET_DMA_DATA :
+			n = copy_to_user(d->buf, pci_cdev->dma_buffer, HELLO_DMA_BUFFER_SIZE);
+			if(n != 0){
+				printk(KERN_ALERT "  cannot copy all data (%d bytes in %d bytes)\n", n, HELLO_DMA_BUFFER_SIZE);
+			}
+			break;
+
+		case HELLO_CMD_SDMA_START :
+			copy_from_user(pci_cdev->sdma_buffer, d->buf, HELLO_DMA_BUFFER_SIZE);
+			pci_cdev->sdma_addr = pci_map_single(pdev, pci_cdev->sdma_buffer,
+					HELLO_DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+			pci_cdev->sdma_len = HELLO_DMA_BUFFER_SIZE;
+			wmb();
+			outl(pci_cdev->sdma_addr, pio_base + HELLO_SET_SDMA_ADDR);
+			outl(pci_cdev->sdma_len, pio_base + HELLO_SET_SDMA_LEN);
+			wmb();
+			outl(DMA_START, pio_base + HELLO_SDMA_START);
+			break;
+		case HELLO_CMD_GET_SDMA_DATA :
+			pci_unmap_single(pdev, pci_cdev->sdma_addr,
+		  			HELLO_DMA_BUFFER_SIZE, DMA_BIDIRECTIONAL);
+			n = copy_to_user(d->buf, pci_cdev->sdma_buffer, HELLO_DMA_BUFFER_SIZE);
+			if(n != 0) {
+				printk(KERN_ALERT "  cannot copy all data (%d bytes in %d bytes)\n", n, HELLO_DMA_BUFFER_SIZE);
+			}
+			break;
+
+		case HELLO_CMD_DOSOMETHING :
+			outl(val, pio_base + HELLO_DOOFFSET);
+			break;
 		default:
+			iounmap(mmio_addr);
 			return -EINVAL; // invalid argument(cmd)
 	}
+
+	iounmap(mmio_addr);
 
 	return 0;
 }
@@ -201,6 +249,31 @@ static struct pci_device_id hello_pci_ids[] =
 // export pci_device_id
 MODULE_DEVICE_TABLE(pci, hello_pci_ids);
 
+// interrupt handler
+
+void hello_do_tasklet(unsigned long unused_data)
+{
+	printk(KERN_ALERT "  tasklet called\n");
+}
+
+DECLARE_TASKLET(hello_tasklet, hello_do_tasklet, 0); // no data
+
+irqreturn_t hello_handler(int irq, void *dev_id)
+{
+	unsigned long pio_base;
+	struct pci_dev *pdev = dev_id;
+
+	printk(KERN_ALERT "  irq handler called\n");
+
+	pio_base = pci_resource_start(pdev, BAR_PIO);
+	// down irq line
+	outl(0, pio_base + HELLO_DOWN_IRQ_OFFSET);
+
+	// register tasklet
+	tasklet_schedule(&hello_tasklet);
+
+	return IRQ_HANDLED; 
+}
 
 //-----------------------------------------------------------------
 // pci initialization function
@@ -210,12 +283,13 @@ static int hello_pci_probe (struct pci_dev *pdev,
 {
 	int err;
 	unsigned long pio_base, mmio_base, pio_flags, mmio_flags, pio_length, mmio_length;
-	int irq;
+	char irq;
 
 	int alloc_ret = 0;
 	int cdev_err = 0;
 
 	short vendor_id, device_id;
+
 
 	//-----------------------------------------------------------------
 	// enable pci device
@@ -233,10 +307,6 @@ static int hello_pci_probe (struct pci_dev *pdev,
 	/* 	return err;  */
 	/* } */
 
-	// get irq
-	irq = pdev->irq;
-	printk(KERN_ALERT "device irq: %d\n", irq);
-
 	// bar 0 ... MMIO
 	mmio_base = pci_resource_start(pdev, BAR_MMIO);
 	mmio_length = pci_resource_len(pdev, BAR_MMIO);
@@ -246,7 +316,6 @@ static int hello_pci_probe (struct pci_dev *pdev,
 		printk(KERN_ERR "%s :error pci_request_region MMIO\n", __func__);
 		return err; 
 	}
-
 
 	printk(KERN_ALERT "mmio_base: %lx, mmio_length: %lx, mmio_flags: %lx\n", mmio_base, mmio_length, mmio_flags);
 	
@@ -266,14 +335,22 @@ static int hello_pci_probe (struct pci_dev *pdev,
 	// define at include/uapi/linux/pci_regs.h
 	pci_read_config_word(pdev, PCI_VENDOR_ID, &vendor_id);
 	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
-
 	printk(KERN_ALERT "PCI Vendor ID:%x, Device ID:%x\n", vendor_id, device_id);
-
-	printk(KERN_ALERT "sucess allocate i/o region\n");
 
 	pci_cdev = (struct pci_cdev*)kmalloc(sizeof(struct pci_cdev), GFP_KERNEL);
 	if(!pci_cdev) goto error;
 	pci_cdev->pdev = pdev;
+
+	printk(KERN_ALERT "sucess allocate i/o region\n");
+
+	//-----------------------------------------------------------------
+	// set irq hundler 
+	// get irq number
+	irq = pdev->irq; // same as pci_read_config_byte(pdev, PCI_INTERRUPT_LINE, &irq);
+	printk(KERN_ALERT "device irq: %d\n", irq);
+
+	err = request_irq(irq, hello_handler, 0, DRIVER_HELLO_NAME, pdev);
+	if(err) goto error;
 
 	//-----------------------------------------------------------------
 	// register character device
@@ -296,6 +373,31 @@ static int hello_pci_probe (struct pci_dev *pdev,
 
 	pci_cdev->cdev = hello_pci_cdev;
 
+	//-----------------------------------------------------------------
+	// config DMA
+	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+	if(err) {
+		printk(KERN_ERR "Cannot set DMA mask\n");
+		goto error;
+	}
+	pci_set_master(pdev);
+
+	// allocate coherent DMA
+	pci_cdev->dma_buffer = pci_alloc_consistent(pdev, HELLO_DMA_BUFFER_SIZE, &pci_cdev->dma_addr);
+	if(pci_cdev->dma_buffer == NULL) {
+		printk(KERN_ERR "Cannot allocate coherent DMA\n");
+		goto error;
+	}
+
+
+	outl(pci_cdev->dma_addr, pio_base + HELLO_SET_DMA_ADDR);
+	pci_cdev->dma_len = HELLO_DMA_BUFFER_SIZE;
+	outl(pci_cdev->dma_len, pio_base + HELLO_SET_DMA_LEN);
+
+	printk(KERN_ALERT "dma_addr : %x\n",  pci_cdev->dma_addr);
+
+	// streaming DMA
+	pci_cdev->sdma_buffer = kmalloc(HELLO_DMA_BUFFER_SIZE, GFP_KERNEL);
 	return 0;
 
 error:

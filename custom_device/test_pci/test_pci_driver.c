@@ -274,10 +274,8 @@ irqreturn_t test_pci_handler(int irq, void *dev_id)
 		tasklet_schedule(&test_tasklet);
 	}
 	if(intmask & INT_CDMA) {
-		// tasklet_schedule(&test_tasklet);
 	}
 	if(intmask & INT_SDMA) {
-		// tasklet_schedule(&test_tasklet);
 		sdma_done = 1;
 	}
 

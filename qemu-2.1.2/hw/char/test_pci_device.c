@@ -215,7 +215,7 @@ static const MemoryRegionOps test_pci_pio_ops = {
     .write = test_pci_pio_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .impl = {
-        .min_access_size = 4,
+        .min_access_size = 1,
         .max_access_size = 4,
     },
 };

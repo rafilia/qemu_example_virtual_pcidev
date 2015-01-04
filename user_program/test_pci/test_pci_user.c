@@ -37,16 +37,14 @@ void close_device(int fd)
 	printf("success: close device\n");
 }
 
-void read_device(int fd)
+void read_device(int fd, char* buf, int size)
 {
-	char buf[TEST_PIO_DATASIZE], *p;
-	int ret; // ssize_t
+	int i=0, ret; // ssize_t
 
-	ret = read(fd, &buf, sizeof(buf)); 
+	ret = read(fd, buf, size); 
 	if(ret > 0) {
-		p = buf;
 		printf("read device : %d bytes read\n", ret);
-		while(ret--) printf("%2d ", *p++);
+		while(ret--) printf("%2d ", buf[i++]);
 	} else {
 		printf("read error");
 	}
@@ -71,16 +69,23 @@ void portio_test(int fd)
 	int i;
 
 	printf("\n---- start portio test ----\n");
-	read_device(fd);
+	for (i = 0; i < TEST_PIO_DATASIZE; i++) {
+		buf[i] = 0;
+	}
+
+	read_device(fd, buf, TEST_PIO_DATASIZE);
   lseek(fd,	0, SEEK_SET);
 
 	for (i = 0; i < TEST_PIO_DATASIZE; i++) {
-		buf[i] = i+10;
+		buf[i] += 10;
 	}
-	write_device(fd, buf, TEST_PIO_DATASIZE);
+	write_device(fd, buf, sizeof(buf));
   lseek(fd,	0, SEEK_SET);
 
-	read_device(fd);
+	for (i = 0; i < TEST_PIO_DATASIZE; i++) {
+		buf[i] = 0;
+	}
+	read_device(fd, buf, TEST_PIO_DATASIZE);
 
 	printf("\n---- end portio test ----\n");
 }

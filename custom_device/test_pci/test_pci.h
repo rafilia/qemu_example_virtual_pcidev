@@ -1,21 +1,3 @@
-#define TEST_PCI_MAGIC 123  // 8bit
-
-/* command for ioctl */
-// for mmio
-#define TEST_CMD_MEMREAD  _IOR(TEST_PCI_MAGIC, 0, int)
-#define TEST_CMD_MEMWRITE _IOW(TEST_PCI_MAGIC, 1, int)
-
-// for irq test
-#define TEST_CMD_DOSOMETHING _IOW(TEST_PCI_MAGIC, 2, int)
-#define TEST_CMD_DONESOMETHING _IOW(TEST_PCI_MAGIC, 3, int)
-
-// for dma test
-#define TEST_CMD_CDMA_START _IOW(TEST_PCI_MAGIC, 4, int)
-#define TEST_CMD_GET_CDMA_DATA _IOR(TEST_PCI_MAGIC, 5, int)
-
-#define TEST_CMD_SDMA_START _IOW(TEST_PCI_MAGIC, 6, int)
-#define TEST_CMD_GET_SDMA_DATA _IOR(TEST_PCI_MAGIC, 7, int)
-
 /* address offset */
 #define TEST_PIO 0
 #define TEST_MEM 0
@@ -65,9 +47,27 @@
 #define SDMA_START 1
 
 // use for ioctl
-typedef struct hello_ioctl_data{
+typedef struct test_ioctl_data{
 	int mmiodata[TEST_MMIO_DATANUM];
 
 	int cdmabuf[TEST_CDMA_BUFFER_NUM];
 	int sdmabuf[TEST_SDMA_BUFFER_NUM];
 } test_ioctl_data;
+
+/* command for ioctl */
+#define TEST_PCI_MAGIC 123  // 8bit
+
+// for mmio
+#define TEST_CMD_MEMREAD  _IOR(TEST_PCI_MAGIC, 0, test_ioctl_data)
+#define TEST_CMD_MEMWRITE _IOW(TEST_PCI_MAGIC, 1, test_ioctl_data)
+
+// for irq test
+#define TEST_CMD_DOSOMETHING _IOW(TEST_PCI_MAGIC, 2, test_ioctl_data)
+#define TEST_CMD_DONESOMETHING _IOW(TEST_PCI_MAGIC, 3, test_ioctl_data)
+
+// for dma test
+#define TEST_CMD_CDMA_START _IOW(TEST_PCI_MAGIC, 4, test_ioctl_data)
+#define TEST_CMD_GET_CDMA_DATA _IOR(TEST_PCI_MAGIC, 5, test_ioctl_data)
+
+#define TEST_CMD_SDMA_START _IOW(TEST_PCI_MAGIC, 6, test_ioctl_data)
+#define TEST_CMD_GET_SDMA_DATA _IOR(TEST_PCI_MAGIC, 7, test_ioctl_data)
